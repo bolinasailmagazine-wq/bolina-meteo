@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Meteo mari – demo pannello Bolina</title>
+<style>
+  body{margin:0;padding:24px;background:#f2f4f7;font-family:Arial,Helvetica,sans-serif}
+  /* Larghezza reale dello spazio in homepage: ~260 px */
+  #bm{width:260px;background:#0b2b4a;color:#fff;border-radius:6px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.25)}
+  #bm *{box-sizing:border-box}
+  #bm .hd{background:#08203a;padding:8px 10px;font-size:13px;font-weight:bold;letter-spacing:.3px;display:flex;justify-content:space-between;align-items:center}
+  #bm .hd small{font-weight:normal;opacity:.7;font-size:10px}
+  #bm select{width:calc(100% - 20px);margin:10px 10px 6px;padding:7px 6px;font-size:13px;border:0;border-radius:4px;background:#e8eef5;color:#08203a;font-weight:bold}
+  #bm .tabs{display:flex;margin:0 10px 8px;gap:4px}
+  #bm .tabs button{flex:1;padding:5px 0;font-size:12px;border:0;border-radius:3px;background:#1b4a75;color:#cfe0f0;cursor:pointer}
+  #bm .tabs button.on{background:#27a3e0;color:#fff;font-weight:bold}
+  #bm .row{display:flex;align-items:center;gap:10px;padding:8px 12px;border-top:1px solid #1c4468}
+  #bm .ic{width:44px;text-align:center;flex:none}
+  #bm .lab{font-size:10px;text-transform:uppercase;letter-spacing:.6px;opacity:.65}
+  #bm .val{font-size:20px;font-weight:bold;line-height:1.15}
+  #bm .val small{font-size:12px;font-weight:normal;opacity:.85}
+  #bm .sub{font-size:11px;opacity:.8;margin-top:1px}
+  #bm .alert{margin:0;padding:6px 12px;font-size:11px;font-weight:bold;color:#fff}
+  #bm .a-giallo{background:#b58900}.a-arancio{background:#d9650f}.a-rosso{background:#c0261e}
+  #bm .ok{padding:6px 12px;font-size:11px;background:#14633c;color:#d7f5e4}
+  #bm .ft{padding:7px 12px;font-size:9px;opacity:.6;line-height:1.35;border-top:1px solid #1c4468}
+  #bm .ft a{color:#9fd4f5}
+  svg{display:block;margin:auto}
+</style>
+</head>
+<body>
+<div id="bm">
+  <div class="hd"><span>Meteo mari</span><small id="bmUpd"></small></div>
+  <select id="bmArea" aria-label="Seleziona area"></select>
+  <div class="tabs"><button id="bmD0" class="on"></button><button id="bmD1"></button></div>
+  <div id="bmBody"></div>
+  <div class="ft">Previsione automatica da modello ECMWF, indicativa. Non sostituisce i bollettini ufficiali. Dati: ECMWF Open Data (CC-BY-4.0).</div>
+</div>
+<script>
+(function(){
+  var DATA_URL = 'meteo.json', cur = 0, data;
+  var DAYS = ['dom','lun','mar','mer','gio','ven','sab'];
+  var MONTHS = ['gen','feb','mar','apr','mag','giu','lug','ago','set','ott','nov','dic'];
+  function el(id){return document.getElementById(id)}
+  function dayLabel(iso, i){
+    var d = new Date(iso + 'T12:00:00Z');
+    return (i === 0 ? 'Oggi' : i === 1 ? 'Domani' : DAYS[d.getUTCDay()]) + ' ' + d.getUTCDate();
+  }
+  function arrow(deg){ // freccia verso dove soffia il vento (provenienza + 180)
+    return '<svg width="36" height="36" viewBox="-18 -18 36 36"><circle r="16" fill="none" stroke="#3b6a95" stroke-width="1.5"/>' +
+      '<g transform="rotate(' + (deg + 180) + ')"><path d="M0,-12 L6,6 L0,2 L-6,6 Z" fill="#27a3e0"/></g></svg>';
+  }
+  function waves(g){
+    var n = Math.min(4, Math.max(1, Math.ceil(g / 2)));
+    var p = '';
+    for (var i = 0; i < n; i++) p += '<path d="M2,' + (8 + i * 7) + ' q6,-7 12,0 t12,0 t12,0" fill="none" stroke="#27a3e0" stroke-width="2"/>';
+    return '<svg width="40" height="36" viewBox="0 0 40 36">' + p + '</svg>';
+  }
+  function drop(mm){
+    var f = mm >= 1 ? '#27a3e0' : '#3b6a95';
+    return '<svg width="30" height="36" viewBox="0 0 30 36"><path d="M15,4 C15,4 4,18 4,24 a11,11 0 0 0 22,0 C26,18 15,4 15,4 Z" fill="' + f + '"/></svg>';
+  }
+  function render(){
+    var a = data.areas[el('bmArea').selectedIndex], d = a.days[cur];
+    var h = '';
+    h += '<div class="row"><div class="ic">' + arrow(d.wind_dir_deg) + '</div><div><div class="lab">Vento</div>' +
+         '<div class="val">' + d.wind_dir + ' <small>' + d.wind_mean_kn + ' nodi</small></div>' +
+         '<div class="sub">' + d.wind_name + ' · forza ' + d.wind_bft + ' Beaufort · raffiche ' + d.wind_gust_kn + ' kn</div></div></div>';
+    h += '<div class="row"><div class="ic">' + waves(d.wave_max_m) + '</div><div><div class="lab">Stato del mare</div>' +
+         '<div class="val">' + d.sea + '</div><div class="sub">Onda media ' + d.wave_mean_m.toFixed(1).replace('.', ',') + ' m, massima ' +
+         d.wave_max_m.toFixed(1).replace('.', ',') + ' m</div></div></div>';
+    var rain = d.rain_max_mm < 1 ? ['Assenti', 'Nessuna precipitazione significativa'] :
+               d.rain_mm < 1 ? ['Locali', 'Fino a ' + Math.round(d.rain_max_mm) + ' mm in zone isolate'] :
+               [d.rain_mm.toFixed(0) + ' mm', 'Max localizzato ' + Math.round(d.rain_max_mm) + ' mm'];
+    h += '<div class="row"><div class="ic">' + drop(d.rain_max_mm) + '</div><div><div class="lab">Precipitazioni</div>' +
+         '<div class="val">' + rain[0] + '</div><div class="sub">' + rain[1] + '</div></div></div>';
+    if (d.alerts.length) d.alerts.forEach(function(x){ h += '<div class="alert a-' + x.level + '">⚠ ' + x.text + '</div>'; });
+    else h += '<div class="ok">Nessuna allerta</div>';
+    el('bmBody').innerHTML = h;
+  }
+  function setDay(i){
+    cur = i; el('bmD0').className = i === 0 ? 'on' : ''; el('bmD1').className = i === 1 ? 'on' : ''; render();
+    try { localStorage.bmDay = i } catch (e) {}
+  }
+  fetch(DATA_URL).then(function(r){return r.json()}).then(function(j){
+    data = j;
+    var sel = el('bmArea');
+    j.areas.forEach(function(a){ var o = document.createElement('option'); o.textContent = a.name; sel.appendChild(o) });
+    var d = j.areas[0].days;
+    el('bmD0').textContent = dayLabel(d[0].date, 0); el('bmD1').textContent = dayLabel(d[1].date, 1);
+    var t = new Date(j.generated);
+    el('bmUpd').textContent = 'agg. ' + t.getUTCDate() + ' ' + MONTHS[t.getUTCMonth()] + ' ' + ('0' + t.getUTCHours()).slice(-2) + ':' + ('0' + t.getUTCMinutes()).slice(-2) + ' UTC';
+    try { if (localStorage.bmArea) sel.selectedIndex = +localStorage.bmArea } catch (e) {}
+    sel.onchange = function(){ try { localStorage.bmArea = sel.selectedIndex } catch (e) {} render() };
+    el('bmD0').onclick = function(){ setDay(0) }; el('bmD1').onclick = function(){ setDay(1) };
+    render();
+  }).catch(function(){ el('bmBody').innerHTML = '<div class="ok" style="background:#8a2a22">Dati meteo non disponibili</div>' });
+})();
+</script>
+</body>
+</html>
