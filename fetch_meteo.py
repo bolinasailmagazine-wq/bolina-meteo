@@ -162,6 +162,7 @@ def main():
                 "wind_kn": float(np.mean(spd)),
                 "wind_u": float(np.mean(u)), "wind_v": float(np.mean(v)),
                 "gust_kn": float(np.nanmax(gust)),
+                "gust_p90_kn": float(np.nanpercentile(gust, 90)),
                 "wave_m": float(np.nanmean(swh)) if np.isfinite(swh).any() else None,
                 "wave_max_m": float(np.nanmax(swh)) if np.isfinite(swh).any() else None,
                 "wave_dir": float(np.nanmean(mwd)) if len(mwd) else None,
@@ -186,7 +187,8 @@ def main():
             u = np.mean([p["wind_u"] for p in pts]); v = np.mean([p["wind_v"] for p in pts])
             mean_kn = float(np.mean([p["wind_kn"] for p in pts]))
             wdir = float((270 - math.degrees(math.atan2(v, u))) % 360)
-            gust = max(p["gust_kn"] for p in pts)
+            peak_kn = max(p["wind_kn"] for p in pts)          # vento sostenuto massimo (media d'area su 3 h)
+            gust = max(p["gust_p90_kn"] for p in pts)         # raffica rappresentativa: 90 percentile dei punti dell'area
             wave = max(p["wave_max_m"] or 0 for p in pts)
             wave_mean = float(np.mean([p["wave_m"] or 0 for p in pts]))
             first, last = idxs[0], idxs[-1]
@@ -196,12 +198,13 @@ def main():
             rain_max = max(0.0, ser[last]["tp_cum_max_mm"] - before_max)
             dg, dname = douglas(wave_mean)
             alerts = []
-            if gust >= 41 or mean_kn >= 28:
-                alerts.append({"level": "rosso", "text": "Burrasca forte: raffiche da Beaufort 9"})
-            elif gust >= 34 or mean_kn >= 22:
-                alerts.append({"level": "arancio", "text": "Burrasca: raffiche da Beaufort 8"})
-            elif gust >= 27 or mean_kn >= 17:
-                alerts.append({"level": "giallo", "text": "Vento sostenuto, raffiche oltre 27 nodi"})
+            # Le allerte di vento si basano sul vento SOSTENUTO (Beaufort), non su raffiche isolate di un punto
+            if peak_kn >= 34:
+                alerts.append({"level": "rosso", "text": "Burrasca forte: vento da forza 8"})
+            elif peak_kn >= 28:
+                alerts.append({"level": "arancio", "text": "Burrasca: vento da forza 7"})
+            elif peak_kn >= 22 or gust >= 34:
+                alerts.append({"level": "giallo", "text": "Vento forte, raffiche fino a %d nodi" % round(gust)})
             if wave >= 4.0:
                 alerts.append({"level": "rosso", "text": f"Mare molto agitato, onde fino a {wave:.1f} m"})
             elif wave >= 2.5:
@@ -212,8 +215,8 @@ def main():
                 alerts.append({"level": "giallo", "text": "Rovesci localmente forti"})
             a["days"].append({
                 "date": day,
-                "wind_mean_kn": round(mean_kn), "wind_gust_kn": round(gust),
-                "wind_bft": beaufort(mean_kn), "wind_dir_deg": round(wdir),
+                "wind_mean_kn": round(mean_kn), "wind_peak_kn": round(peak_kn), "wind_gust_kn": round(gust),
+                "wind_bft": beaufort(peak_kn), "wind_dir_deg": round(wdir),
                 "wind_dir": compass(wdir), "wind_name": DIR_IT[int((wdir + 22.5) // 45) % 8],
                 "wave_mean_m": round(wave_mean, 1), "wave_max_m": round(wave, 1),
                 "douglas": dg, "sea": dname,
