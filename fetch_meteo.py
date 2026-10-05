@@ -15,31 +15,45 @@ BASE = "https://data.ecmwf.int/forecasts"
 STEPS = list(range(0, 49, 3))          # 0..48 h, ogni 3 h
 OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.dirname(os.path.abspath(__file__))
 
-# Aree (nome, lon_min, lon_max, lat_min, lat_max). Solo punti di mare.
-# Confini approssimati dalla cartina: da affinare con le coordinate ufficiali.
+# Aree dei bollettini Meteomar come poligoni (lon, lat). I limiti sono stati ricavati dalla cartina
+# "Limiti dei mari nei bollettini meteo" georeferenziata sui gradi stampati in cornice (errore ~0,1-0,2 gradi).
+# Il mare si seleziona dai punti in cui il modello onde e' definito, quindi i poligoni possono attraversare la terra.
 AREAS = [
-    ("mar-ligure",          "Mar Ligure",                   6.0, 10.5, 43.0, 44.5),
-    ("mar-di-corsica",      "Mar di Corsica",               6.0,  9.7, 41.3, 43.0),
-    ("tirreno-settentr",    "Tirreno Settentrionale",       9.7, 12.5, 41.9, 43.0),
-    ("tirreno-centr-ovest", "Tirreno Centrale – Ovest",     9.7, 11.6, 40.0, 41.9),
-    ("tirreno-centr-est",   "Tirreno Centrale – Est",      11.6, 15.0, 40.0, 41.9),
-    ("tirreno-merid-ovest", "Tirreno Meridionale – Ovest",  9.7, 12.5, 37.9, 40.0),
-    ("tirreno-merid-est",   "Tirreno Meridionale – Est",   12.5, 16.1, 37.9, 40.0),
-    ("mar-di-sardegna",     "Mar di Sardegna",              6.0,  9.7, 39.0, 41.3),
-    ("canale-di-sardegna",  "Canale di Sardegna",           6.0, 10.2, 35.0, 39.0),
-    ("stretto-di-sicilia",  "Stretto di Sicilia",          10.2, 15.0, 35.0, 37.9),
-    ("ionio-settentr",      "Ionio Settentrionale",        15.5, 20.0, 37.8, 39.8),
-    ("ionio-merid",         "Ionio Meridionale",           15.0, 20.0, 35.0, 37.8),
-    ("adriatico-settentr",  "Adriatico Settentrionale",    12.0, 16.0, 43.9, 46.0),
-    ("adriatico-centr",     "Adriatico Centrale",          13.0, 19.0, 41.8, 43.9),
-    ("adriatico-merid",     "Adriatico Meridionale",       15.5, 20.0, 39.8, 41.8),
+    ("mar-ligure",          "Mar Ligure",                      [(6.0, 43.0), (10.7, 43.0), (10.7, 46.0), (6.0, 46.0)]),
+    ("mar-di-corsica",      "Mar di Corsica",                  [(6.0, 41.3), (9.6, 41.3), (9.6, 43.0), (6.0, 43.0)]),
+    ("tirreno-settentr",    "Tirreno Settentrionale",          [(9.6, 42.1), (12.2, 42.1), (12.2, 43.0), (9.6, 43.0)]),
+    ("tirreno-centr-ovest", "Tirreno Centrale – Settore Ovest", [(9.6, 40.0), (11.8, 40.0), (10.8, 42.1), (9.6, 42.1)]),
+    ("tirreno-centr-est",   "Tirreno Centrale – Settore Est",  [(11.8, 40.0), (10.8, 42.1), (12.5, 42.1), (16.0, 40.0)]),
+    ("tirreno-merid-ovest", "Tirreno Meridionale – Settore Ovest", [(9.6, 40.0), (12.3, 40.0), (12.3, 38.1), (10.0, 38.0), (10.0, 39.0), (9.6, 39.0)]),
+    ("tirreno-merid-est",   "Tirreno Meridionale – Settore Est",   [(12.3, 40.0), (16.0, 40.0), (16.0, 38.1), (12.3, 38.1)]),
+    ("mar-di-sardegna",     "Mar di Sardegna",                 [(6.0, 39.0), (9.6, 39.0), (9.6, 41.3), (6.0, 41.3)]),
+    ("canale-di-sardegna",  "Canale di Sardegna",              [(6.0, 35.0), (6.0, 39.0), (10.0, 39.0), (10.0, 38.0), (10.6, 37.2), (10.6, 35.0)]),
+    ("stretto-di-sicilia",  "Stretto di Sicilia",              [(10.0, 38.0), (15.0, 38.25), (15.0, 35.0), (10.6, 35.0), (10.6, 37.2)]),
+    ("ionio-settentr",      "Ionio Settentrionale",            [(15.7, 38.0), (20.0, 38.0), (20.0, 39.8), (18.35, 39.8), (18.35, 40.6), (16.0, 40.6), (15.7, 40.0)]),
+    ("ionio-merid",         "Ionio Meridionale",               [(15.0, 35.0), (20.0, 35.0), (20.0, 38.0), (15.0, 38.0)]),
+    ("adriatico-settentr",  "Adriatico Settentrionale",        [(12.0, 44.0), (16.0, 44.0), (16.0, 46.0), (12.0, 46.0)]),
+    ("adriatico-centr",     "Adriatico Centrale",              [(12.0, 42.0), (20.0, 42.0), (20.0, 44.0), (12.0, 44.0)]),
+    ("adriatico-merid",     "Adriatico Meridionale",           [(15.0, 42.0), (20.0, 42.0), (20.0, 39.8), (18.35, 39.8), (16.9, 41.2)]),
 ]
+
+
+def in_polygon(lon, lat, poly):
+    """Ray casting vettorizzato: True per i punti dentro il poligono."""
+    inside = np.zeros(lon.shape, bool)
+    n = len(poly)
+    for i in range(n):
+        x1, y1 = poly[i]; x2, y2 = poly[(i + 1) % n]
+        cross = ((y1 > lat) != (y2 > lat)) & (lon < (x2 - x1) * (lat - y1) / (y2 - y1 + 1e-12) + x1)
+        inside ^= cross
+    return inside
+
 
 DIRS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
 DIR_IT = ["Tramontana", "Grecale", "Levante", "Scirocco", "Ostro", "Libeccio", "Ponente", "Maestrale"]
-DOUGLAS = [(0.1, 0, "Calmo"), (0.5, 1, "Quasi calmo"), (1.25, 2, "Poco mosso"), (2.5, 3, "Mosso"),
-           (4.0, 4, "Molto mosso"), (6.0, 5, "Agitato"), (9.0, 6, "Molto agitato"),
-           (14.0, 7, "Grosso"), (1e9, 8, "Molto grosso")]
+# Scala Douglas: (limite superiore altezza onda m, grado, descrizione)
+DOUGLAS = [(0.05, 0, "Calmo"), (0.1, 1, "Quasi calmo"), (0.5, 2, "Poco mosso"), (1.25, 3, "Mosso"),
+           (2.5, 4, "Molto mosso"), (4.0, 5, "Agitato"), (6.0, 6, "Molto agitato"),
+           (9.0, 7, "Grosso"), (14.0, 8, "Molto grosso"), (1e9, 9, "Tempestoso")]
 
 
 def beaufort(kn):
@@ -118,9 +132,8 @@ def main():
     sea_w = wvals < 1e10
 
     areas_idx = {}
-    for key, name, lo0, lo1, la0, la1 in AREAS:
-        m = (lons >= lo0) & (lons <= lo1) & (lats >= la0) & (lats <= la1)
-        # maschera mare: cerca per ogni punto atmosferico il punto onde più vicino (stessa griglia 0.25°)
+    for key, name, poly in AREAS:
+        m = in_polygon(lons, lats, poly)
         if len(wvals) == len(lons):
             m &= sea_w
         areas_idx[key] = np.where(m)[0]
@@ -132,7 +145,7 @@ def main():
               "run": run.strftime("%Y-%m-%dT%H:%MZ"),
               "source": "ECMWF Open Data (CC-BY-4.0)", "areas": []}
 
-    for key, name, *_ in AREAS:
+    for key, name, _poly in AREAS:
         ix = areas_idx[key]
         series = []
         for st, t in zip(STEPS, times):
