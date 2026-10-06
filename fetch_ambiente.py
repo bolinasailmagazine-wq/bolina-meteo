@@ -164,21 +164,20 @@ def main():
     result = {key: {"id": key} for key, _, _ in AREAS}
     try:
         import copernicusmarine as cm
-        for fn in (cmems_ph, cmems_level):
+        for fn in (cmems_ph,):                 # livello del mare (cmems_level, ioc_level) disattivato: non mostrato nel pannello
             try:
                 fn(cm, result)
             except Exception as e:
                 print(fn.__name__, "FALLITO:", repr(e)[:400])
     except Exception as e:
         print("Copernicus Marine non disponibile:", repr(e)[:400])
-    ioc_level(result)
     doc = {"generated": dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%MZ"),
            "source": "Copernicus Marine (CMEMS) MED; ISPRA/IOC mareografi", "areas": list(result.values())}
     os.makedirs(OUT, exist_ok=True)
     path = os.path.join(OUT, "ambiente.json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump(doc, f, ensure_ascii=False, separators=(",", ":"))
-    n = {k: sum(1 for a in result.values() if k in a) for k in ("ph", "level_fc", "level_obs")}
+    n = {k: sum(1 for a in result.values() if k in a) for k in ("ph", "ph_z")}
     print("Scritto", path, os.path.getsize(path), "byte; aree con dati:", n)
     if not any(n.values()):
         raise SystemExit("Nessun dato ambientale disponibile")
