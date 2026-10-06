@@ -58,6 +58,14 @@ def local_day(ts):
     return t.astimezone(ROME).strftime("%Y-%m-%d")
 
 
+def load_ph_clim():
+    try:
+        return json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "ph_clim.json"), encoding="utf-8"))["areas"]
+    except Exception as e:
+        print("climatologia pH non disponibile:", e)
+        return {}
+
+
 def cmems_ph(cm, result):
     """pH superficiale: media d'area per giorno (previsione fino a 10 giorni)."""
     start = dt.datetime.utcnow().strftime("%Y-%m-%dT00:00:00")
@@ -68,16 +76,25 @@ def cmems_ph(cm, result):
     lon, lat = da["longitude"].values, da["latitude"].values
     times = da["time"].values
     print("pH: forma", da.shape, "giorni", len(times), "da", str(times[0])[:10], "a", str(times[-1])[:10])
+    clim = load_ph_clim()
     for key, name, poly in AREAS:
         m = area_mask(lon, lat, poly)
-        vals = {}
+        vals, zs = {}, {}
+        c = clim.get(key)
         for i, t in enumerate(times):
             v = da.values[i][m]
             v = v[np.isfinite(v)]
             if len(v) >= 5:
-                vals[str(t)[:10]] = round(float(v.mean()), 3)
+                day = str(t)[:10]
+                vals[day] = round(float(v.mean()), 3)
+                if c:   # scarto in deviazioni standard dalla media mensile 1999-2019, corretto dello scarto tra i due sistemi
+                    mth = int(day[5:7]) - 1
+                    z = (float(v.mean()) - c["bias"] - c["avg"][mth]) / max(c["std"][mth], 0.004)
+                    zs[day] = round(z, 1)
         if vals:
             result[key]["ph"] = vals
+        if zs:
+            result[key]["ph_z"] = zs
 
 
 def cmems_level(cm, result):
