@@ -12,7 +12,7 @@ import requests
 import eccodes
 
 BASE = "https://data.ecmwf.int/forecasts"
-STEPS = list(range(0, 49, 3))          # 0..48 h, ogni 3 h
+STEPS = list(range(0, 73, 3)) + list(range(78, 169, 6))   # 0-72 h ogni 3 h, poi ogni 6 h fino a 7 giorni
 OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.dirname(os.path.abspath(__file__))
 
 # Aree dei bollettini Meteomar come poligoni (lon, lat). I limiti sono stati ricavati dalla cartina
@@ -106,11 +106,11 @@ def fetch_fields(session, run, step, stream, params):
                 with open(f.name, "rb") as fh:
                     gid = eccodes.codes_grib_new_from_file(fh)
                     eccodes.codes_set(gid, "missingValue", 1e20)
-                    out[j["param"]] = (
-                        eccodes.codes_get_array(gid, "values"),
-                        eccodes.codes_get_array(gid, "latitudes"),
-                        eccodes.codes_get_array(gid, "longitudes"),
-                    )
+                    vals = eccodes.codes_get_array(gid, "values")
+                    la = eccodes.codes_get_array(gid, "latitudes")
+                    lo = eccodes.codes_get_array(gid, "longitudes")
+                    keep = (la >= 34.5) & (la <= 46.5) & (lo >= 5.5) & (lo <= 20.5)   # solo Mediterraneo: meno memoria
+                    out[j["param"]] = (vals[keep], la[keep], lo[keep])
                     eccodes.codes_release(gid)
     return out
 
