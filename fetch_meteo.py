@@ -4,7 +4,7 @@ con vento, raffiche, precipitazioni e stato del mare per le 15 aree dei bolletti
 
 Uso: python fetch_meteo.py [cartella_output]
 """
-import json, math, os, sys, tempfile, datetime as dt
+import json, math, os, re, sys, tempfile, datetime as dt
 from zoneinfo import ZoneInfo
 from concurrent.futures import ThreadPoolExecutor
 import numpy as np
@@ -71,16 +71,22 @@ def douglas(h):
             return g, name
 
 
-def find_run(session):
+def candidate_runs(session):
+    """Run ECMWF disponibili, dal piu' recente: se l'ultimo e' ancora incompleto si ripiega sul precedente."""
     now = dt.datetime.utcnow()
+    found = []
     for back in range(0, 48, 6):
         t = (now - dt.timedelta(hours=back)).replace(minute=0, second=0, microsecond=0)
         t = t.replace(hour=t.hour - t.hour % 6)
         d, h = t.strftime("%Y%m%d"), t.strftime("%H")
         url = f"{BASE}/{d}/{h}z/ifs/0p25/oper/{d}{h}0000-{STEPS[-1]}h-oper-fc.index"
         if session.get(url, timeout=30).status_code == 200:
-            return t
-    raise SystemExit("Nessun run ECMWF disponibile")
+            found.append(t)
+        if len(found) == 3:
+            break
+    if not found:
+        raise SystemExit("Nessun run ECMWF disponibile")
+    return found
 
 
 def fetch_fields(session, run, step, stream, params):
@@ -109,19 +115,73 @@ def fetch_fields(session, run, step, stream, params):
     return out
 
 
+OISST = "https://psl.noaa.gov/thredds/dodsC/Datasets/noaa.oisst.v2.highres"
+
+
+def _oisst_grid(session, nc, t, i0, i1, j0, j1):
+    """Scarica una finestra della griglia OISST (0.25 gradi) via OPeNDAP in formato ascii."""
+    r = session.get(f"{OISST}/{nc}.ascii?sst[{t}:{t}][{i0}:{i1}][{j0}:{j1}]", timeout=90)
+    r.raise_for_status()
+    rows = []
+    for line in r.text.splitlines():
+        m = re.match(r"\[0\]\[(\d+)\],\s*(.*)", line)
+        if m:
+            rows.append([float(x) for x in m.group(2).split(",")])
+    a = np.array(rows)
+    a[(a < -100) | (a > 100)] = np.nan
+    return a
+
+
+def sea_surface_temperature(session):
+    """Temperatura superficiale del mare per area: ultimo dato osservato NOAA OISST (ritardo 1-3 giorni)
+    e anomalia rispetto alla media giornaliera 1991-2020 dello stesso dataset."""
+    i0, i1 = int((35.0 + 89.875) / 0.25), int((46.2 + 89.875) / 0.25) + 1
+    j0, j1 = int((5.9 - 0.125) / 0.25), int((20.1 - 0.125) / 0.25) + 1
+    lats = -89.875 + 0.25 * np.arange(i0, i1 + 1)
+    lons = 0.125 + 0.25 * np.arange(j0, j1 + 1)
+    LON, LAT = np.meshgrid(lons, lats)
+    year = dt.datetime.utcnow().year
+    nc = f"sst.day.mean.{year}.nc"
+    n = int(re.search(r"time = (\d+)\]", session.get(f"{OISST}/{nc}.dds", timeout=60).text).group(1))
+    obs, day = None, None
+    for back in range(0, 6):                       # l'ultimo giorno puo' essere ancora vuoto
+        o = _oisst_grid(session, nc, n - 1 - back, i0, i1, j0, j1)
+        if np.isfinite(o).sum() > 500:
+            obs, day = o, dt.date(year, 1, 1) + dt.timedelta(days=n - 1 - back)
+            break
+    if obs is None:
+        raise RuntimeError("OISST senza dati recenti")
+    doy = min((dt.date(2001, day.month, day.day) - dt.date(2001, 1, 1)).days, 364)
+    clim = _oisst_grid(session, "sst.day.mean.ltm.1991-2020.nc", doy, i0, i1, j0, j1)
+    out = {}
+    for key, name, poly in AREAS:
+        m = in_polygon(LON, LAT, poly) & np.isfinite(obs) & np.isfinite(clim)
+        if m.sum() >= 5:
+            out[key] = {"temp": round(float(obs[m].mean()), 1), "clim": round(float(clim[m].mean()), 1),
+                        "anom": round(float((obs[m] - clim[m]).mean()), 1), "date": day.isoformat()}
+    return out
+
+
 def main():
     s = requests.Session()
-    run = find_run(s)
-    print("Run ECMWF:", run)
+    data = None
+    for run in candidate_runs(s):
+        print("Run ECMWF:", run)
 
-    def job(step):
-        a = fetch_fields(s, run, step, "oper", {"10u", "10v", "10fg", "tp"})
-        b = fetch_fields(s, run, step, "wave", {"swh", "mwd", "mwp"})
-        a.update(b)
-        return step, a
+        def job(step, run=run):
+            a = fetch_fields(s, run, step, "oper", {"10u", "10v", "10fg", "tp", "msl"})
+            b = fetch_fields(s, run, step, "wave", {"swh", "mwd", "mwp"})
+            a.update(b)
+            return step, a
 
-    with ThreadPoolExecutor(6) as ex:
-        data = dict(ex.map(job, STEPS))
+        try:
+            with ThreadPoolExecutor(6) as ex:
+                data = dict(ex.map(job, STEPS))
+            break
+        except Exception as e:      # run ancora in pubblicazione: si prova quello precedente
+            print("Run incompleto, riprovo con il precedente:", e)
+    if data is None:
+        raise SystemExit("Nessun run ECMWF completo")
 
     _, lats, lons = data[0]["10u"]
     lons = np.where(lons > 180, lons - 360, lons)
@@ -145,6 +205,12 @@ def main():
               "run": run.strftime("%Y-%m-%dT%H:%MZ"),
               "source": "ECMWF Open Data (CC-BY-4.0)", "areas": []}
 
+    try:
+        sst = sea_surface_temperature(s)
+    except Exception as e:              # il resto del pannello funziona anche senza temperatura del mare
+        print("SST non disponibile:", e)
+        sst = {}
+
     for key, name, _poly in AREAS:
         ix = areas_idx[key]
         series = []
@@ -163,6 +229,7 @@ def main():
                 "wind_u": float(np.mean(u)), "wind_v": float(np.mean(v)),
                 "gust_kn": float(np.nanmax(gust)),
                 "gust_p90_kn": float(np.nanpercentile(gust, 90)),
+                "p_hpa": float(np.mean(f["msl"][0][ix]) / 100.0),
                 "wave_m": float(np.nanmean(swh)) if np.isfinite(swh).any() else None,
                 "wave_max_m": float(np.nanmax(swh)) if np.isfinite(swh).any() else None,
                 "wave_dir": float(np.nanmean(mwd)) if len(mwd) else None,
@@ -170,7 +237,10 @@ def main():
                 "tp_cum_max_mm": float(np.max(tp)),
                 "n": int(len(ix)),
             })
-        result["areas"].append({"id": key, "name": name, "series": series})
+        entry = {"id": key, "name": name, "series": series, "pressure_now_hpa": round(series[0]["p_hpa"], 1)}
+        if key in sst:
+            entry["sst"] = sst[key]
+        result["areas"].append(entry)
 
     # sintesi per giorno (giorno locale Europe/Rome) sull'orizzonte disponibile
     for a in result["areas"]:
@@ -196,6 +266,9 @@ def main():
             before_max = ser[first - 1]["tp_cum_max_mm"] if first > 0 else 0.0
             rain = max(0.0, ser[last]["tp_cum_mm"] - before)
             rain_max = max(0.0, ser[last]["tp_cum_max_mm"] - before_max)
+            p_vals = [p["p_hpa"] for p in pts]
+            p_start = ser[first - 1]["p_hpa"] if first > 0 else ser[first]["p_hpa"]
+            p_delta = ser[last]["p_hpa"] - p_start
             dg, dname = douglas(wave_mean)
             alerts = []
             # Le allerte di vento si basano sul vento SOSTENUTO (Beaufort), non su raffiche isolate di un punto
@@ -215,6 +288,8 @@ def main():
                 alerts.append({"level": "giallo", "text": "Rovesci localmente forti"})
             a["days"].append({
                 "date": day,
+                "pressure_mean_hpa": round(float(np.mean(p_vals))), "pressure_max_hpa": round(max(p_vals)),
+                "pressure_min_hpa": round(min(p_vals)), "pressure_delta_hpa": round(p_delta, 1),
                 "wind_mean_kn": round(mean_kn), "wind_peak_kn": round(peak_kn), "wind_gust_kn": round(gust),
                 "wind_bft": beaufort(peak_kn), "wind_dir_deg": round(wdir),
                 "wind_dir": compass(wdir), "wind_name": DIR_IT[int((wdir + 22.5) // 45) % 8],
