@@ -4,7 +4,7 @@ con vento, raffiche, precipitazioni e stato del mare per le 15 aree dei bolletti
 
 Uso: python fetch_meteo.py [cartella_output]
 """
-import json, math, os, re, sys, tempfile, datetime as dt
+import json, math, os, re, sys, tempfile, time, datetime as dt
 from zoneinfo import ZoneInfo
 from concurrent.futures import ThreadPoolExecutor
 import numpy as np
@@ -71,6 +71,18 @@ def douglas(h):
             return g, name
 
 
+def get(session, url, tries=8, **kw):
+    """GET con attese crescenti se ECMWF risponde 429 (troppe richieste) o 5xx."""
+    for n in range(tries):
+        r = session.get(url, **kw)
+        if r.status_code not in (429, 500, 502, 503, 504):
+            return r
+        wait = float(r.headers.get("Retry-After", 0) or 0) or min(2 ** n, 30)
+        time.sleep(wait)
+    r.raise_for_status()
+    return r
+
+
 def candidate_runs(session):
     """Run ECMWF disponibili, dal piu' recente: se l'ultimo e' ancora incompleto si ripiega sul precedente."""
     now = dt.datetime.utcnow()
@@ -80,7 +92,7 @@ def candidate_runs(session):
         t = t.replace(hour=t.hour - t.hour % 6)
         d, h = t.strftime("%Y%m%d"), t.strftime("%H")
         url = f"{BASE}/{d}/{h}z/ifs/0p25/oper/{d}{h}0000-{STEPS[-1]}h-oper-fc.index"
-        if session.get(url, timeout=30).status_code == 200:
+        if get(session, url, timeout=30).status_code == 200:
             found.append(t)
         if len(found) == 3:
             break
@@ -93,13 +105,13 @@ def fetch_fields(session, run, step, stream, params):
     d, h = run.strftime("%Y%m%d"), run.strftime("%H")
     kind = "oper" if stream == "oper" else "wave"
     root = f"{BASE}/{d}/{h}z/ifs/0p25/{kind}/{d}{h}0000-{step}h-{kind}-fc"
-    idx = session.get(root + ".index", timeout=60).text.splitlines()
+    idx = get(session, root + ".index", timeout=60).text.splitlines()
     out = {}
     for line in idx:
         j = json.loads(line)
         if j["param"] in params and j.get("levtype") == "sfc":
-            r = session.get(root + ".grib2", timeout=120,
-                            headers={"Range": f"bytes={j['_offset']}-{j['_offset'] + j['_length'] - 1}"})
+            r = get(session, root + ".grib2", timeout=120,
+                    headers={"Range": f"bytes={j['_offset']}-{j['_offset'] + j['_length'] - 1}"})
             r.raise_for_status()
             with tempfile.NamedTemporaryFile(suffix=".grib2") as f:
                 f.write(r.content); f.flush()
@@ -175,7 +187,7 @@ def main():
             return step, a
 
         try:
-            with ThreadPoolExecutor(6) as ex:
+            with ThreadPoolExecutor(3) as ex:
                 data = dict(ex.map(job, STEPS))
             break
         except Exception as e:      # run ancora in pubblicazione: si prova quello precedente
