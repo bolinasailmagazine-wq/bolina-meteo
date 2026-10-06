@@ -29,6 +29,7 @@ ROME = ZoneInfo("Europe/Rome")
 
 DS_PH = "cmems_mod_med_bgc-car_anfc_4.2km_P1D-m"
 DS_SSH = "cmems_mod_med_phy-ssh_anfc_4.2km-2D_PT1H-m"
+DS_SST = "cmems_mod_med_phy-tem_anfc_4.2km_P1D-m"      # temperatura (3D, media giornaliera): si usa lo strato superficiale
 
 # mareografo ISPRA piu' rappresentativo per ciascuna area (codice IOC, nome). Alcune aree non ne hanno.
 STATIONS = {
@@ -95,6 +96,61 @@ def cmems_ph(cm, result):
             result[key]["ph"] = vals
         if zs:
             result[key]["ph_z"] = zs
+
+
+def cmems_sst(cm, result):
+    """Temperatura del mare prevista, ancorata al dato osservato NOAA.
+    temperatura(giorno) = osservato(ultimo giorno NOAA) + [modello(giorno) - modello(ultimo giorno NOAA)]
+    L'anomalia e' rispetto alla media giornaliera 1991-2020 NOAA dello stesso giorno dell'anno."""
+    from fetch_meteo import sea_surface_temperature, _oisst_grid
+    s = requests.Session()
+    obs = sea_surface_temperature(s)                      # {area: {temp, clim, anom, date}} sull'ultimo giorno NOAA
+    if not obs:
+        raise RuntimeError("nessun dato NOAA")
+    obs_day = next(iter(obs.values()))["date"]
+    d0 = dt.date.fromisoformat(obs_day)
+    end = dt.date.today() + dt.timedelta(days=10)
+    ds = cm.open_dataset(dataset_id=DS_SST, variables=["thetao"], minimum_depth=0, maximum_depth=2,
+                         start_datetime=d0.strftime("%Y-%m-%dT00:00:00"), end_datetime=end.strftime("%Y-%m-%dT23:59:59"), **BBOX)
+    da = ds["thetao"].isel(depth=0).load()
+    lon, lat = da["longitude"].values, da["latitude"].values
+    days = [str(t)[:10] for t in da["time"].values]
+    print("SST modello: forma", da.shape, "giorni", days[0], "->", days[-1], "| dato NOAA del", obs_day)
+    # media NOAA 1991-2020 per ciascun giorno richiesto, sulla stessa finestra e griglia 0.25 gradi usate per le osservazioni
+    i0, i1 = int((35.0 + 89.875) / 0.25), int((46.2 + 89.875) / 0.25) + 1
+    j0, j1 = int((5.9 - 0.125) / 0.25), int((20.1 - 0.125) / 0.25) + 1
+    LON, LAT = np.meshgrid(0.125 + 0.25 * np.arange(j0, j1 + 1), -89.875 + 0.25 * np.arange(i0, i1 + 1))
+    clim_day = {}
+    for day in days:
+        if day < obs_day:
+            continue
+        dd = dt.date.fromisoformat(day)
+        doy = min((dt.date(2001, dd.month, dd.day) - dt.date(2001, 1, 1)).days, 364)
+        g = _oisst_grid(s, "sst.day.mean.ltm.1991-2020.nc", doy, i0, i1, j0, j1)
+        clim_day[day] = {key: float(np.nanmean(g[in_polygon(LON, LAT, poly) & np.isfinite(g)])) for key, _, poly in AREAS
+                         if (in_polygon(LON, LAT, poly) & np.isfinite(g)).sum() >= 5}
+    for key, name, poly in AREAS:
+        if key not in obs:
+            continue
+        m = area_mask(lon, lat, poly)
+        series = {}
+        for i, day in enumerate(days):
+            v = da.values[i][m]
+            v = v[np.isfinite(v)]
+            if len(v) >= 5:
+                series[day] = float(v.mean())
+        if obs_day not in series:
+            print("SST: giorno di ancoraggio assente per", key); continue
+        base = series[obs_day]
+        out = {}
+        for day, v in series.items():
+            if day < obs_day or day not in clim_day or key not in clim_day[day]:
+                continue
+            t = obs[key]["temp"] + (v - base)
+            out[day] = {"t": round(t, 1), "a": round(t - clim_day[day][key], 1)}
+        if out:
+            result[key]["sst_fc"] = out
+            result[key]["sst_base"] = obs_day
 
 
 def cmems_level(cm, result):
@@ -164,7 +220,7 @@ def main():
     result = {key: {"id": key} for key, _, _ in AREAS}
     try:
         import copernicusmarine as cm
-        for fn in (cmems_ph,):                 # livello del mare (cmems_level, ioc_level) disattivato: non mostrato nel pannello
+        for fn in (cmems_ph, cmems_sst):                 # livello del mare (cmems_level, ioc_level) disattivato: non mostrato nel pannello
             try:
                 fn(cm, result)
             except Exception as e:
@@ -177,7 +233,7 @@ def main():
     path = os.path.join(OUT, "ambiente.json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump(doc, f, ensure_ascii=False, separators=(",", ":"))
-    n = {k: sum(1 for a in result.values() if k in a) for k in ("ph", "ph_z")}
+    n = {k: sum(1 for a in result.values() if k in a) for k in ("ph", "ph_z", "sst_fc")}
     print("Scritto", path, os.path.getsize(path), "byte; aree con dati:", n)
     if not any(n.values()):
         raise SystemExit("Nessun dato ambientale disponibile")
