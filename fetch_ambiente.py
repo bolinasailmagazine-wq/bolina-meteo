@@ -83,7 +83,7 @@ def cmems_ph(cm, result):
     clim = load_ph_clim()
     for key, name, poly in AREAS:
         m = area_mask(lon, lat, poly)
-        vals, zs = {}, {}
+        vals, zs, pcts = {}, {}, {}
         c = clim.get(key)
         for i, t in enumerate(times):
             v = da.values[i][m]
@@ -95,10 +95,14 @@ def cmems_ph(cm, result):
                     mth = int(day[5:7]) - 1
                     z = (float(v.mean()) - c["bias"] - c["avg"][mth]) / max(c["std"][mth], 0.004)
                     zs[day] = round(z, 1)
+                    # acidita' = concentrazione di ioni idrogeno = 10^(-pH): variazione percentuale rispetto alla media del mese
+                    pcts[day] = round((10 ** (c["avg"][mth] - (float(v.mean()) - c["bias"])) - 1) * 100)
         if vals:
             result[key]["ph"] = vals
         if zs:
             result[key]["ph_z"] = zs
+        if pcts:
+            result[key]["ph_pct"] = pcts
 
 
 def cmems_messina(cm, result):
@@ -325,7 +329,7 @@ def main():
     path = os.path.join(OUT, "ambiente.json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump(doc, f, ensure_ascii=False, separators=(",", ":"))
-    n = {k: sum(1 for a in result.values() if k in a) for k in ("ph", "ph_z", "sst_fc", "cur")}
+    n = {k: sum(1 for a in result.values() if k in a) for k in ("ph", "ph_z", "ph_pct", "sst_fc", "cur")}
     print("Scritto", path, os.path.getsize(path), "byte; aree con dati:", n)
     if not any(n.values()):
         raise SystemExit("Nessun dato ambientale disponibile")
