@@ -11,6 +11,7 @@ Uso: python fetch_ambiente.py [cartella_output]
 """
 import datetime as dt
 import json
+import math
 import os
 import statistics
 import sys
@@ -29,6 +30,7 @@ ROME = ZoneInfo("Europe/Rome")
 
 DS_PH = "cmems_mod_med_bgc-car_anfc_4.2km_P1D-m"
 DS_SSH = "cmems_mod_med_phy-ssh_anfc_4.2km-2D_PT1H-m"
+DS_CUR = "cmems_mod_med_phy-cur_anfc_4.2km_P1D-m"      # correnti (3D, media giornaliera): si usa lo strato superficiale
 DS_SST = "cmems_mod_med_phy-tem_anfc_4.2km_P1D-m"      # temperatura (3D, media giornaliera): si usa lo strato superficiale
 
 # mareografo ISPRA piu' rappresentativo per ciascuna area (codice IOC, nome). Alcune aree non ne hanno.
@@ -96,6 +98,38 @@ def cmems_ph(cm, result):
             result[key]["ph"] = vals
         if zs:
             result[key]["ph_z"] = zs
+
+
+def cmems_cur(cm, result):
+    """Corrente superficiale (media giornaliera) per area: velocita' media e 95 percentile in nodi, verso di provenienza del flusso medio.
+    Il verso e' quello verso cui va l'acqua (non da dove viene, a differenza del vento); se il flusso medio e' debole
+    rispetto alla velocita' tipica la corrente e' indicata come variabile."""
+    start = dt.datetime.utcnow().strftime("%Y-%m-%dT00:00:00")
+    end = (dt.datetime.utcnow() + dt.timedelta(days=10)).strftime("%Y-%m-%dT23:59:59")
+    ds = cm.open_dataset(dataset_id=DS_CUR, variables=["uo", "vo"], minimum_depth=0, maximum_depth=2,
+                         start_datetime=start, end_datetime=end, **BBOX)
+    u = ds["uo"].isel(depth=0).load()
+    v = ds["vo"].isel(depth=0).load()
+    lon, lat = u["longitude"].values, u["latitude"].values
+    days = [str(t)[:10] for t in u["time"].values]
+    print("correnti: forma", u.shape, "giorni", days[0], "->", days[-1])
+    KN = 1.943844
+    for key, name, poly in AREAS:
+        m = area_mask(lon, lat, poly)
+        out = {}
+        for i, day in enumerate(days):
+            uu, vv = u.values[i][m], v.values[i][m]
+            ok = np.isfinite(uu) & np.isfinite(vv)
+            if ok.sum() < 5:
+                continue
+            uu, vv = uu[ok], vv[ok]
+            spd = np.hypot(uu, vv) * KN
+            mu, mv = float(uu.mean()), float(vv.mean())
+            mean_vec = math.hypot(mu, mv) * KN
+            d = (math.degrees(math.atan2(mu, mv)) % 360) if mean_vec >= 0.25 * float(spd.mean()) and mean_vec >= 0.05 else None
+            out[day] = {"v": round(float(spd.mean()), 2), "m": round(float(np.percentile(spd, 95)), 2), "d": None if d is None else round(d)}
+        if out:
+            result[key]["cur"] = out
 
 
 def cmems_sst(cm, result):
@@ -220,7 +254,7 @@ def main():
     result = {key: {"id": key} for key, _, _ in AREAS}
     try:
         import copernicusmarine as cm
-        for fn in (cmems_ph, cmems_sst):                 # livello del mare (cmems_level, ioc_level) disattivato: non mostrato nel pannello
+        for fn in (cmems_ph, cmems_sst, cmems_cur):                 # livello del mare (cmems_level, ioc_level) disattivato: non mostrato nel pannello
             try:
                 fn(cm, result)
             except Exception as e:
@@ -233,7 +267,7 @@ def main():
     path = os.path.join(OUT, "ambiente.json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump(doc, f, ensure_ascii=False, separators=(",", ":"))
-    n = {k: sum(1 for a in result.values() if k in a) for k in ("ph", "ph_z", "sst_fc")}
+    n = {k: sum(1 for a in result.values() if k in a) for k in ("ph", "ph_z", "sst_fc", "cur")}
     print("Scritto", path, os.path.getsize(path), "byte; aree con dati:", n)
     if not any(n.values()):
         raise SystemExit("Nessun dato ambientale disponibile")
