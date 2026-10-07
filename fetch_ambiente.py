@@ -30,6 +30,7 @@ ROME = ZoneInfo("Europe/Rome")
 
 DS_PH = "cmems_mod_med_bgc-car_anfc_4.2km_P1D-m"
 DS_SSH = "cmems_mod_med_phy-ssh_anfc_4.2km-2D_PT1H-m"
+DS_CURH = "cmems_mod_med_phy-cur_anfc_4.2km-2D_PT1H-m"   # correnti orarie (comprendono la marea): per lo Stretto di Messina
 DS_CUR = "cmems_mod_med_phy-cur_anfc_4.2km_P1D-m"      # correnti (3D, media giornaliera): si usa lo strato superficiale
 DS_SST = "cmems_mod_med_phy-tem_anfc_4.2km_P1D-m"      # temperatura (3D, media giornaliera): si usa lo strato superficiale
 
@@ -98,6 +99,48 @@ def cmems_ph(cm, result):
             result[key]["ph"] = vals
         if zs:
             result[key]["ph_z"] = zs
+
+
+def cmems_messina(cm, result):
+    """Stretto di Messina: orari in cui la corrente di marea cambia verso (stima dal modello orario Copernicus).
+    Si segue il nucleo (cella piu' veloce) della corrente lungo l'asse dello stretto (verso 20 gradi, NNE): positivo = montante (verso N),
+    negativo = scendente (verso S). Un'inversione e' un cambio di segno oltre la soglia di 0,2 nodi.
+    Validato (7/10/2026): il livello del modello coincide coi mareografi ISPRA (corr 0.76-0.97, scarto <=1 h) e la corrente e' in sintonia col
+    dislivello misurato tra gli imbocchi (corr 0.93), ma gli orari di inversione possono differire di circa 2 ore: vanno presentati come stime."""
+    base = dt.datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0) - dt.timedelta(hours=3)
+    ds = cm.open_dataset(dataset_id=DS_CURH, variables=["uo", "vo"], minimum_longitude=15.45, maximum_longitude=15.80,
+                         minimum_latitude=37.95, maximum_latitude=38.45,
+                         start_datetime=base.strftime("%Y-%m-%dT%H:%M:%S"), end_datetime=(base + dt.timedelta(days=6)).strftime("%Y-%m-%dT%H:%M:%S"))
+    u = ds["uo"].load(); v = ds["vo"].load()
+    if "depth" in u.dims:
+        u = u.isel(depth=0); v = v.isel(depth=0)
+    ax = (math.sin(math.radians(20)), math.cos(math.radians(20)))
+    times, core = [], []
+    for i, t in enumerate(u["time"].values):
+        uu, vv = u.values[i], v.values[i]
+        ok = np.isfinite(uu) & np.isfinite(vv)
+        if not ok.any():
+            continue
+        spd = np.hypot(uu[ok], vv[ok])
+        k = int(np.argmax(spd))
+        along = float(((uu * ax[0] + vv * ax[1])[ok] * 1.943844)[k])
+        times.append(dt.datetime.utcfromtimestamp(int(t) / 1e9).replace(tzinfo=dt.timezone.utc).astimezone(ROME))
+        core.append(along)
+    print("Messina: ore", len(core), "max nucleo", round(max(abs(x) for x in core), 2) if core else None)
+    out, last = {}, 0
+    for t, a in zip(times, core):
+        day = t.strftime("%Y-%m-%d")
+        e = out.setdefault(day, {"inv": [], "max": 0.0})
+        e["max"] = max(e["max"], abs(a))
+        sg = 1 if a > 0.2 else -1 if a < -0.2 else 0
+        if sg and last and sg != last:
+            e["inv"].append([t.strftime("%H:%M"), "N" if sg > 0 else "S"])
+        if sg:
+            last = sg
+    for day in out:
+        out[day]["max"] = round(out[day]["max"], 1)
+    for key in ("tirreno-merid-est", "ionio-settentr"):
+        result[key]["messina"] = out
 
 
 def cmems_cur(cm, result):
@@ -254,7 +297,7 @@ def main():
     result = {key: {"id": key} for key, _, _ in AREAS}
     try:
         import copernicusmarine as cm
-        for fn in (cmems_ph, cmems_sst, cmems_cur):                 # livello del mare (cmems_level, ioc_level) disattivato: non mostrato nel pannello
+        for fn in (cmems_ph, cmems_sst, cmems_cur, cmems_messina):                 # livello del mare (cmems_level, ioc_level) disattivato: non mostrato nel pannello
             try:
                 fn(cm, result)
             except Exception as e:
