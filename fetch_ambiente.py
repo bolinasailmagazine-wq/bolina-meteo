@@ -127,16 +127,31 @@ def cmems_messina(cm, result):
         times.append(dt.datetime.utcfromtimestamp(int(t) / 1e9).replace(tzinfo=dt.timezone.utc).astimezone(ROME))
         core.append(along)
     print("Messina: ore", len(core), "max nucleo", round(max(abs(x) for x in core), 2) if core else None)
-    out, last = {}, 0
+    # fasi = tratti consecutivi con lo stesso segno (oltre 0,2 nodi); si scartano quelle brevi (< 2 ore) o deboli (picco < 0,6 nodi),
+    # che sono code della marea e non vere inversioni utili alla navigazione, poi si fondono le fasi adiacenti dello stesso verso
+    seg = []
     for t, a in zip(times, core):
-        day = t.strftime("%Y-%m-%d")
-        e = out.setdefault(day, {"inv": [], "max": 0.0})
-        e["max"] = max(e["max"], abs(a))
         sg = 1 if a > 0.2 else -1 if a < -0.2 else 0
-        if sg and last and sg != last:
-            e["inv"].append([t.strftime("%H:%M"), "N" if sg > 0 else "S"])
-        if sg:
-            last = sg
+        if not sg:
+            continue
+        if seg and seg[-1]["sg"] == sg and (t - seg[-1]["end"]) <= dt.timedelta(hours=2):
+            seg[-1]["end"] = t; seg[-1]["peak"] = max(seg[-1]["peak"], abs(a))
+        else:
+            seg.append({"sg": sg, "start": t, "end": t, "peak": abs(a)})
+    seg = [x for x in seg if (x["end"] - x["start"]) >= dt.timedelta(hours=1) and x["peak"] >= 0.6]
+    fused = []
+    for x in seg:
+        if fused and fused[-1]["sg"] == x["sg"]:
+            fused[-1]["end"] = x["end"]; fused[-1]["peak"] = max(fused[-1]["peak"], x["peak"])
+        else:
+            fused.append(dict(x))
+    out = {}
+    for t, a in zip(times, core):
+        e = out.setdefault(t.strftime("%Y-%m-%d"), {"inv": [], "max": 0.0})
+        e["max"] = max(e["max"], abs(a))
+    for prev, cur in zip(fused, fused[1:]):
+        day = cur["start"].strftime("%Y-%m-%d")
+        out.setdefault(day, {"inv": [], "max": 0.0})["inv"].append([cur["start"].strftime("%H:%M"), "N" if cur["sg"] > 0 else "S"])
     for day in out:
         out[day]["max"] = round(out[day]["max"], 1)
     for key in ("tirreno-merid-est", "ionio-settentr"):
