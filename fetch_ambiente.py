@@ -249,6 +249,49 @@ def cmems_sst(cm, result):
             result[key]["sst_base"] = obs_day
 
 
+def cmems_grid(cm, result=None):
+    """Campi su griglia (sottocampionata) per la mappa della pagina di dettaglio: correnti, temperatura del modello, pH.
+    Scrive dettaglio_mare.json. Correnti in 0.01 nodi, temperatura in 0.1 C, pH come (pH-7.5)*1000, tutti interi."""
+    NDAYS = 5
+    t0 = dt.datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    start, end = t0.strftime("%Y-%m-%dT00:00:00"), (t0 + dt.timedelta(days=NDAYS - 1)).strftime("%Y-%m-%dT23:59:59")
+    KN = 1.943844
+    out = {"generated": dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%MZ"), "source": "Copernicus Marine (CMEMS) MED", "layers": {}}
+    spec = (("cur", DS_CUR, ["uo", "vo"], 3), ("sst", DS_SST, ["thetao"], 4), ("ph", DS_PH, ["ph"], 4))
+    for name, dsid, vars_, stride in spec:
+        ds = cm.open_dataset(dataset_id=dsid, variables=vars_, minimum_depth=0, maximum_depth=2,
+                             start_datetime=start, end_datetime=end, **BBOX)
+        arrs = [ds[v].isel(depth=0).load() for v in vars_]
+        lon, lat = arrs[0]["longitude"].values, arrs[0]["latitude"].values
+        days = [str(t)[:10] for t in arrs[0]["time"].values][:NDAYS]
+        vals = [a.values[:NDAYS, ::stride, ::stride] for a in arrs]
+        lo, la = lon[::stride], lat[::stride]
+        ok = np.isfinite(vals[0][0])
+        for v in vals[1:]:
+            ok &= np.isfinite(v[0])
+        ii, jj = np.where(ok)
+        layer = {"days": days, "pts": [[round(float(lo[j]), 2), round(float(la[i]), 2)] for i, j in zip(ii, jj)]}
+        for k, v in enumerate(vals):
+            rows = []
+            for d in range(v.shape[0]):
+                x = v[d][ii, jj]
+                if name == "cur":
+                    x = x * KN * 100
+                elif name == "sst":
+                    x = x * 10
+                else:
+                    x = (x - 7.5) * 1000
+                rows.append([int(round(float(a))) if np.isfinite(a) else None for a in x])
+            layer[("u", "v")[k] if name == "cur" else "z"] = rows
+        layer["unit"] = {"cur": "0.01 kn", "sst": "0.1 C", "ph": "(pH-7.5)*1000"}[name]
+        out["layers"][name] = layer
+        print("griglia", name, len(layer["pts"]), "punti,", len(days), "giorni")
+    path = os.path.join(OUT, "dettaglio_mare.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(out, f, ensure_ascii=False, separators=(",", ":"))
+    print("Scritto", path, os.path.getsize(path), "byte")
+
+
 def cmems_level(cm, result):
     """Altezza del mare prevista (zos): per giorno locale, minimo e massimo dell'area rispetto alla media del periodo (cm)."""
     now = dt.datetime.utcnow()
@@ -316,7 +359,7 @@ def main():
     result = {key: {"id": key} for key, _, _ in AREAS}
     try:
         import copernicusmarine as cm
-        for fn in (cmems_ph, cmems_sst, cmems_cur, cmems_messina):                 # livello del mare (cmems_level, ioc_level) disattivato: non mostrato nel pannello
+        for fn in (cmems_ph, cmems_sst, cmems_cur, cmems_messina, cmems_grid):                 # livello del mare (cmems_level, ioc_level) disattivato: non mostrato nel pannello
             try:
                 fn(cm, result)
             except Exception as e:

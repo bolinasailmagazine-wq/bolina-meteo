@@ -254,6 +254,19 @@ def main():
             entry["sst"] = sst[key]
         result["areas"].append(entry)
 
+    # dettaglio per la pagina "approfondisci": serie per area (colonne in "cols") e campo di vento sui punti di mare
+    detail = {"generated": result["generated"], "run": result["run"], "source": result["source"],
+              "cols": ["t", "wind_kn", "wind_dir", "gust_kn", "wave_m", "wave_max_m", "p_hpa", "rain_mm", "wave_dir"], "areas": []}
+    gm = sea_w.copy() if len(wvals) == len(lons) else np.ones(len(lons), bool)
+    gm &= (lats >= 34.5) & (lats <= 46.5) & (lons >= 5.5) & (lons <= 20.5)
+    gix = np.where(gm)[0]
+    wsteps = [st for st in STEPS if st <= 72]
+    detail["wind"] = {"pts": [[round(float(lons[i]), 2), round(float(lats[i]), 2)] for i in gix],
+                      "t": [(run + dt.timedelta(hours=st)).strftime("%Y-%m-%dT%H:%MZ") for st in wsteps],
+                      "u": [[int(round(float(data[st]["10u"][0][i]) * 19.43844)) for i in gix] for st in wsteps],
+                      "v": [[int(round(float(data[st]["10v"][0][i]) * 19.43844)) for i in gix] for st in wsteps],
+                      "unit": "0.1 kn"}
+
     # sintesi per giorno (giorno locale Europe/Rome) sull'orizzonte disponibile
     for a in result["areas"]:
         days = {}
@@ -310,7 +323,17 @@ def main():
                 "rain_mm": round(rain, 1), "rain_max_mm": round(rain_max, 1),
                 "alerts": alerts,
             })
-        # le serie dettagliate non servono al sito
+        # serie compatta per la pagina di dettaglio (dettaglio_meteo.json)
+        det_rows = []
+        for i, p in enumerate(ser):
+            pw = ser[i - 1]["tp_cum_mm"] if i > 0 else 0.0
+            wdr = (270 - math.degrees(math.atan2(p["wind_v"], p["wind_u"]))) % 360
+            det_rows.append([p["t"], round(p["wind_kn"], 1), round(wdr), round(p["gust_p90_kn"]),
+                             None if p["wave_m"] is None else round(p["wave_m"], 1),
+                             None if p["wave_max_m"] is None else round(p["wave_max_m"], 1),
+                             round(p["p_hpa"], 1), round(max(0.0, p["tp_cum_mm"] - pw), 1),
+                             None if p["wave_dir"] is None else round(p["wave_dir"])])
+        detail["areas"].append({"id": a["id"], "name": a["name"], "rows": det_rows})
         a["series_points"] = len(ser)
         del a["series"]
 
@@ -319,6 +342,10 @@ def main():
     with open(path, "w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, separators=(",", ":"))
     print("Scritto", path, os.path.getsize(path), "byte")
+    dpath = os.path.join(OUT, "dettaglio_meteo.json")
+    with open(dpath, "w", encoding="utf-8") as f:
+        json.dump(detail, f, ensure_ascii=False, separators=(",", ":"))
+    print("Scritto", dpath, os.path.getsize(dpath), "byte")
 
 
 if __name__ == "__main__":
