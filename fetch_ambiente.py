@@ -32,6 +32,7 @@ DS_PH = "cmems_mod_med_bgc-car_anfc_4.2km_P1D-m"
 DS_SSH = "cmems_mod_med_phy-ssh_anfc_4.2km-2D_PT1H-m"
 DS_CURH = "cmems_mod_med_phy-cur_anfc_4.2km-2D_PT1H-m"   # correnti orarie (comprendono la marea): per lo Stretto di Messina
 DS_CUR = "cmems_mod_med_phy-cur_anfc_4.2km_P1D-m"      # correnti (3D, media giornaliera): si usa lo strato superficiale
+DS_WAV = "cmems_mod_med_wav_anfc_4.2km_PT1H-i"           # onde (Hm0, direzione, periodo), dati orari, previsione 10 giorni
 DS_SST = "cmems_mod_med_phy-tem_anfc_4.2km_P1D-m"      # temperatura (3D, media giornaliera): si usa lo strato superficiale
 
 # mareografo ISPRA piu' rappresentativo per ciascuna area (codice IOC, nome). Alcune aree non ne hanno.
@@ -292,6 +293,39 @@ def cmems_grid(cm, result=None):
     print("Scritto", path, os.path.getsize(path), "byte")
 
 
+def cmems_waves(cm, result=None):
+    """Onde orarie (modello Copernicus MedWAM, ~4 km): per area altezza significativa media e massima, direzione media di provenienza e periodo di picco.
+    Scrive dettaglio_onde.json: una riga all'ora a partire da t0, per 7 giorni."""
+    now = dt.datetime.utcnow().replace(minute=0, second=0, microsecond=0)
+    start = now - dt.timedelta(hours=3)
+    end = now + dt.timedelta(hours=168)
+    ds = cm.open_dataset(dataset_id=DS_WAV, variables=["VHM0", "VMDR", "VTPK"],
+                         start_datetime=start.strftime("%Y-%m-%dT%H:00:00"), end_datetime=end.strftime("%Y-%m-%dT%H:00:00"), **BBOX)
+    h = ds["VHM0"].load(); d = ds["VMDR"].load(); t = ds["VTPK"].load()
+    lon, lat = h["longitude"].values, h["latitude"].values
+    times = [str(x)[:16] + "Z" for x in h["time"].values]
+    print("onde: forma", h.shape, times[0], "->", times[-1])
+    out = {"generated": dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%MZ"), "source": "Copernicus Marine (CMEMS) MED Waves (MedWAM)",
+           "t0": times[0], "step_h": 1, "cols": ["hm0_mean_m", "hm0_max_m", "dir_from_deg", "tp_s"], "areas": {}}
+    for key, name, poly in AREAS:
+        m = area_mask(lon, lat, poly)
+        hv = h.values[:, m]; dv = d.values[:, m]; tv = t.values[:, m]
+        rows = []
+        for i in range(hv.shape[0]):
+            x = hv[i]; ok = np.isfinite(x)
+            if ok.sum() < 5:
+                rows.append(None); continue
+            ang = np.radians(dv[i][ok]); w = x[ok]
+            dr = (math.degrees(math.atan2(float((w * np.sin(ang)).sum()), float((w * np.cos(ang)).sum()))) % 360)
+            tp = tv[i][ok]
+            rows.append([round(float(x[ok].mean()), 2), round(float(x[ok].max()), 2), round(dr), round(float(np.nanmean(tp)), 1) if np.isfinite(tp).any() else None])
+        out["areas"][key] = rows
+    path = os.path.join(OUT, "dettaglio_onde.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(out, f, ensure_ascii=False, separators=(",", ":"))
+    print("Scritto", path, os.path.getsize(path), "byte")
+
+
 def cmems_level(cm, result):
     """Altezza del mare prevista (zos): per giorno locale, minimo e massimo dell'area rispetto alla media del periodo (cm)."""
     now = dt.datetime.utcnow()
@@ -359,7 +393,7 @@ def main():
     result = {key: {"id": key} for key, _, _ in AREAS}
     try:
         import copernicusmarine as cm
-        for fn in (cmems_ph, cmems_sst, cmems_cur, cmems_messina, cmems_grid):                 # livello del mare (cmems_level, ioc_level) disattivato: non mostrato nel pannello
+        for fn in (cmems_ph, cmems_sst, cmems_cur, cmems_messina, cmems_grid, cmems_waves):                 # livello del mare (cmems_level, ioc_level) disattivato: non mostrato nel pannello
             try:
                 fn(cm, result)
             except Exception as e:

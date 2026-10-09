@@ -57,6 +57,7 @@ DOUGLAS = [(0.05, 0, "Calmo"), (0.1, 1, "Quasi calmo"), (0.5, 2, "Poco mosso"), 
 
 
 def beaufort(kn):
+    kn = math.floor(kn + 0.5)      # la scala si applica ai nodi interi mostrati (es. 10,6 -> 11 -> forza 4)
     lim = [1, 4, 7, 11, 17, 22, 28, 34, 41, 48, 56, 64]
     return sum(kn >= x for x in lim)
 
