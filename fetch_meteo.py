@@ -133,7 +133,7 @@ OISST = "https://psl.noaa.gov/thredds/dodsC/Datasets/noaa.oisst.v2.highres"
 
 def _oisst_grid(session, nc, t, i0, i1, j0, j1):
     """Scarica una finestra della griglia OISST (0.25 gradi) via OPeNDAP in formato ascii."""
-    r = session.get(f"{OISST}/{nc}.ascii?sst[{t}:{t}][{i0}:{i1}][{j0}:{j1}]", timeout=90)
+    r = get(session, f"{OISST}/{nc}.ascii?sst[{t}:{t}][{i0}:{i1}][{j0}:{j1}]", timeout=90)   # con nuovi tentativi: il server NOAA risponde a volte 429
     r.raise_for_status()
     rows = []
     for line in r.text.splitlines():
@@ -155,7 +155,7 @@ def sea_surface_temperature(session):
     LON, LAT = np.meshgrid(lons, lats)
     year = dt.datetime.utcnow().year
     nc = f"sst.day.mean.{year}.nc"
-    n = int(re.search(r"time = (\d+)\]", session.get(f"{OISST}/{nc}.dds", timeout=60).text).group(1))
+    n = int(re.search(r"time = (\d+)\]", get(session, f"{OISST}/{nc}.dds", timeout=60).text).group(1))
     obs, day = None, None
     for back in range(0, 6):                       # l'ultimo giorno puo' essere ancora vuoto
         o = _oisst_grid(session, nc, n - 1 - back, i0, i1, j0, j1)
