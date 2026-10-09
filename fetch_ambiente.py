@@ -248,6 +248,7 @@ def cmems_sst(cm, result):
         if out:
             result[key]["sst_fc"] = out
             result[key]["sst_base"] = obs_day
+            result[key]["sst_off"] = round(obs[key]["temp"] - base, 3)     # scarto osservato-modello al giorno di ancoraggio (serve alla mappa)
 
 
 def cmems_grid(cm, result=None):
@@ -271,6 +272,24 @@ def cmems_grid(cm, result=None):
         for v in vals[1:]:
             ok &= np.isfinite(v[0])
         ii, jj = np.where(ok)
+        off = None                       # correzione dolce (pesi inversi alla distanza) sui punti della mappa, la stessa del pannello: SST ancorata a NOAA, pH senza il bias del modello
+        if name in ("sst", "ph"):
+            cents, offs = [], []
+            clim = load_ph_clim() if name == "ph" else {}
+            LON_, LAT_ = np.meshgrid(lo, la)
+            for key_, _n, poly_ in AREAS:
+                o = (result or {}).get(key_, {}).get("sst_off") if name == "sst" else clim.get(key_, {}).get("bias")
+                if o is None:
+                    continue
+                mk = area_mask(lo, la, poly_) & ok
+                if mk.sum() < 5:
+                    continue
+                cents.append((float(LON_[mk].mean()), float(LAT_[mk].mean()))); offs.append(float(o))
+            if cents:
+                P_ = np.array([[lo[j], la[i]] for i, j in zip(ii, jj)])
+                C_ = np.array(cents)
+                w_ = 1.0 / (((P_[:, None, :] - C_[None, :, :]) ** 2).sum(-1) + 0.05)
+                off = (w_ * np.array(offs)[None, :]).sum(1) / w_.sum(1)
         layer = {"days": days, "pts": [[round(float(lo[j]), 2), round(float(la[i]), 2)] for i, j in zip(ii, jj)]}
         for k, v in enumerate(vals):
             rows = []
@@ -279,9 +298,9 @@ def cmems_grid(cm, result=None):
                 if name == "cur":
                     x = x * KN * 100
                 elif name == "sst":
-                    x = x * 10
+                    x = (x + (off if off is not None else 0)) * 10
                 else:
-                    x = (x - 7.5) * 1000
+                    x = (x - (off if off is not None else 0) - 7.5) * 1000
                 rows.append([int(round(float(a))) if np.isfinite(a) else None for a in x])
             layer[("u", "v")[k] if name == "cur" else "z"] = rows
         layer["unit"] = {"cur": "0.01 kn", "sst": "0.1 C", "ph": "(pH-7.5)*1000"}[name]
