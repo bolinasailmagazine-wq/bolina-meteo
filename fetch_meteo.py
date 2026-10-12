@@ -124,8 +124,16 @@ def fetch_fields(session, run, step, stream, params):
                     lo = eccodes.codes_get_array(gid, "longitudes")
                     keep = (la >= 34.5) & (la <= 46.5) & (lo >= 5.5) & (lo <= 20.5)   # solo Mediterraneo: meno memoria
                     out[j["param"]] = (vals[keep], la[keep], lo[keep])
+                    if j["param"] == "msl":      # pressione su area larga a 0,5 gradi per la carta delle isobare
+                        lo2 = np.where(lo > 180, lo - 360, lo)
+                        k2 = ((la >= ISO_LAT0) & (la <= ISO_LAT0 + 0.5 * (ISO_NY - 1)) & (lo2 >= ISO_LON0) & (lo2 <= ISO_LON0 + 0.5 * (ISO_NX - 1))
+                              & (np.abs(la * 2 - np.round(la * 2)) < 1e-6) & (np.abs(lo2 * 2 - np.round(lo2 * 2)) < 1e-6))
+                        out["msl_wide"] = (vals[k2], la[k2], lo2[k2])
                     eccodes.codes_release(gid)
     return out
+
+
+ISO_LON0, ISO_LAT0, ISO_NX, ISO_NY = -25.0, 30.0, 141, 61     # area della carta delle isobare: da -25 a +45 E, da 30 a 60 N, passo 0,5 gradi
 
 
 OISST = "https://psl.noaa.gov/thredds/dodsC/Datasets/noaa.oisst.v2.highres"
@@ -343,6 +351,26 @@ def main():
     with open(path, "w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, separators=(",", ":"))
     print("Scritto", path, os.path.getsize(path), "byte")
+    # dettaglio_isobare.json: pressione al livello del mare ogni 6 ore fino a 72 ore (hPa*10-9000, interi)
+    iso_steps = [st for st in STEPS if st <= 72 and st % 6 == 0 and "msl_wide" in data[st]]
+    iso = {"generated": result["generated"], "run": result["run"], "lon0": ISO_LON0, "lat0": ISO_LAT0, "d": 0.5, "nx": ISO_NX, "ny": ISO_NY,
+           "unit": "hPa*10-9000", "t": [(run + dt.timedelta(hours=st)).strftime("%Y-%m-%dT%H:%MZ") for st in iso_steps], "z": []}
+    for st in iso_steps:
+        v, la_, lo_ = data[st]["msl_wide"]
+        g = np.zeros(ISO_NX * ISO_NY, dtype=int)
+        cnt = np.zeros(ISO_NX * ISO_NY, dtype=int)
+        ix = np.round((lo_ - ISO_LON0) / 0.5).astype(int); iy = np.round((la_ - ISO_LAT0) / 0.5).astype(int)
+        ok = (ix >= 0) & (ix < ISO_NX) & (iy >= 0) & (iy < ISO_NY)
+        g[iy[ok] * ISO_NX + ix[ok]] = np.round(v[ok] / 10.0 - 9000).astype(int)
+        cnt[iy[ok] * ISO_NX + ix[ok]] = 1
+        if cnt.sum() < 0.98 * ISO_NX * ISO_NY:
+            print("isobare: griglia incompleta a +%d h (%d/%d punti)" % (st, cnt.sum(), ISO_NX * ISO_NY)); continue
+        iso["z"].append(g.tolist())
+    if len(iso["z"]) == len(iso_steps) and iso_steps:
+        ipath = os.path.join(OUT, "dettaglio_isobare.json")
+        with open(ipath, "w", encoding="utf-8") as f:
+            json.dump(iso, f, separators=(",", ":"))
+        print("Scritto", ipath, os.path.getsize(ipath), "byte")
     dpath = os.path.join(OUT, "dettaglio_meteo.json")
     with open(dpath, "w", encoding="utf-8") as f:
         json.dump(detail, f, ensure_ascii=False, separators=(",", ":"))
