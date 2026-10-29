@@ -124,11 +124,11 @@ def fetch_fields(session, run, step, stream, params):
                     lo = eccodes.codes_get_array(gid, "longitudes")
                     keep = (la >= 34.5) & (la <= 46.5) & (lo >= 5.5) & (lo <= 20.5)   # solo Mediterraneo: meno memoria
                     out[j["param"]] = (vals[keep], la[keep], lo[keep])
-                    if j["param"] == "msl":      # pressione su area larga a 0,5 gradi per la carta delle isobare
+                    if j["param"] in ("msl", "2t"):      # pressione e temperatura a 2 m su area larga a 0,5 gradi per le carte meteo
                         lo2 = np.where(lo > 180, lo - 360, lo)
                         k2 = ((la >= ISO_LAT0) & (la <= ISO_LAT0 + 0.5 * (ISO_NY - 1)) & (lo2 >= ISO_LON0) & (lo2 <= ISO_LON0 + 0.5 * (ISO_NX - 1))
                               & (np.abs(la * 2 - np.round(la * 2)) < 1e-6) & (np.abs(lo2 * 2 - np.round(lo2 * 2)) < 1e-6))
-                        out["msl_wide"] = (vals[k2], la[k2], lo2[k2])
+                        out[j["param"] + "_wide"] = (vals[k2], la[k2], lo2[k2])
                     eccodes.codes_release(gid)
     return out
 
@@ -190,7 +190,7 @@ def main():
         print("Run ECMWF:", run)
 
         def job(step, run=run):
-            a = fetch_fields(s, run, step, "oper", {"10u", "10v", "10fg", "tp", "msl"})
+            a = fetch_fields(s, run, step, "oper", {"10u", "10v", "10fg", "tp", "msl", "2t"})
             b = fetch_fields(s, run, step, "wave", {"swh", "mwd", "mwp"})
             a.update(b)
             return step, a
@@ -371,6 +371,26 @@ def main():
         with open(ipath, "w", encoding="utf-8") as f:
             json.dump(iso, f, separators=(",", ":"))
         print("Scritto", ipath, os.path.getsize(ipath), "byte")
+    # dettaglio_temperature.json: temperatura dell'aria a 2 m ogni 6 ore fino a 72 ore (gradi C * 10, interi)
+    tmp_steps = [st for st in STEPS if st <= 72 and st % 6 == 0 and "2t_wide" in data[st]]
+    tmp = {"generated": result["generated"], "run": result["run"], "lon0": ISO_LON0, "lat0": ISO_LAT0, "d": 0.5, "nx": ISO_NX, "ny": ISO_NY,
+           "unit": "C*10", "t": [(run + dt.timedelta(hours=st)).strftime("%Y-%m-%dT%H:%MZ") for st in tmp_steps], "z": []}
+    for st in tmp_steps:
+        v, la_, lo_ = data[st]["2t_wide"]
+        g = np.zeros(ISO_NX * ISO_NY, dtype=int)
+        cnt = np.zeros(ISO_NX * ISO_NY, dtype=int)
+        ix = np.round((lo_ - ISO_LON0) / 0.5).astype(int); iy = np.round((la_ - ISO_LAT0) / 0.5).astype(int)
+        ok = (ix >= 0) & (ix < ISO_NX) & (iy >= 0) & (iy < ISO_NY)
+        g[iy[ok] * ISO_NX + ix[ok]] = np.round((v[ok] - 273.15) * 10).astype(int)
+        cnt[iy[ok] * ISO_NX + ix[ok]] = 1
+        if cnt.sum() < 0.98 * ISO_NX * ISO_NY:
+            print("temperature: griglia incompleta a +%d h (%d/%d punti)" % (st, cnt.sum(), ISO_NX * ISO_NY)); continue
+        tmp["z"].append(g.tolist())
+    if len(tmp["z"]) == len(tmp_steps) and tmp_steps:
+        tpath = os.path.join(OUT, "dettaglio_temperature.json")
+        with open(tpath, "w", encoding="utf-8") as f:
+            json.dump(tmp, f, separators=(",", ":"))
+        print("Scritto", tpath, os.path.getsize(tpath), "byte")
     dpath = os.path.join(OUT, "dettaglio_meteo.json")
     with open(dpath, "w", encoding="utf-8") as f:
         json.dump(detail, f, ensure_ascii=False, separators=(",", ":"))
