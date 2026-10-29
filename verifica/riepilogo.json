@@ -1,0 +1,85 @@
+{
+ "generated": "2026-10-29T16:42Z",
+ "n_previsioni": 228,
+ "n_coppie": 38,
+ "cicli": [
+  "2026-10-29T00:00Z"
+ ],
+ "stazioni": [
+  "LIBD",
+  "LIBP",
+  "LIBR",
+  "LICC",
+  "LICD",
+  "LICG",
+  "LICJ",
+  "LICR",
+  "LICT",
+  "LIEA",
+  "LIEE",
+  "LIEO",
+  "LIMJ",
+  "LIPQ",
+  "LIPY",
+  "LIPZ",
+  "LIRF",
+  "LIRN",
+  "LIRP"
+ ],
+ "totale": {
+  "ecmwf": {
+   "n": 38,
+   "mae": 2.67,
+   "bias": 0.39,
+   "rmse": 3.53,
+   "dir_mae": 36.6,
+   "n_dir": 13
+  },
+  "icon": {
+   "n": 38,
+   "mae": 1.84,
+   "bias": -0.78,
+   "rmse": 2.52,
+   "dir_mae": 24.3,
+   "n_dir": 13
+  }
+ },
+ "per_scadenza": {
+  "6": {
+   "ecmwf": {
+    "n": 19,
+    "mae": 3.43,
+    "bias": 1.19,
+    "rmse": 4.47,
+    "dir_mae": 14.7,
+    "n_dir": 3
+   },
+   "icon": {
+    "n": 19,
+    "mae": 1.83,
+    "bias": -0.24,
+    "rmse": 2.57,
+    "dir_mae": 32.5,
+    "n_dir": 4
+   }
+  },
+  "12": {
+   "ecmwf": {
+    "n": 19,
+    "mae": 1.92,
+    "bias": -0.41,
+    "rmse": 2.22,
+    "dir_mae": 43.2,
+    "n_dir": 10
+   },
+   "icon": {
+    "n": 19,
+    "mae": 1.85,
+    "bias": -1.32,
+    "rmse": 2.47,
+    "dir_mae": 20.7,
+    "n_dir": 9
+   }
+  }
+ }
+}
