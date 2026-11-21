@@ -1,1 +1,12 @@
-ERRORE FATALE HTTPError('504 Server Error: Gateway Time-out for url: https://aviationweather.gov/api/data/metar?ids=LIMJ%2CLIRP%2CLIRF%2CLIRN%2CLIEO%2CLIEE%2CLICJ%2CLICD%2CLICC%2CLIBD%2CLIBP%2CLIPY%2CLIPQ%2CLIEA%2CLICT%2CLIBR%2CLIPZ%2CLICG%2CLICR&format=json&hours=18')
+METAR: 400 nuove osservazioni, 19 stazioni
+Ciclo ECMWF: 2026-11-20 12:00:00
+ECMWF: 114 previsioni
+ICON-EU: 114 previsioni
+Previsioni nuove salvate: 228
+RIEPILOGO: 4244 coppie su 9576 previsioni, 42 cicli
+  + 6 h  n=671  ECMWF mae 3.07 bias +0.70 | ICON mae 2.25 bias -1.05
+  +12 h  n=756  ECMWF mae 3.00 bias -0.15 | ICON mae 2.49 bias -1.43
+  +24 h  n=738  ECMWF mae 3.03 bias -0.34 | ICON mae 2.55 bias -1.39
+  +36 h  n=718  ECMWF mae 3.14 bias -0.09 | ICON mae 2.65 bias -1.47
+  +48 h  n=699  ECMWF mae 3.21 bias -0.23 | ICON mae 2.71 bias -1.48
+  +72 h  n=662  ECMWF mae 3.43 bias -0.44 | ICON mae 2.93 bias -1.45
