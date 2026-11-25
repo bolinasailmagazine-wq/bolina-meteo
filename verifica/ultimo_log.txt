@@ -1,12 +1,12 @@
-METAR: 305 nuove osservazioni, 19 stazioni
-Ciclo ECMWF: 2026-11-24 12:00:00
+METAR: 386 nuove osservazioni, 19 stazioni
+Ciclo ECMWF: 2026-11-25 12:00:00
 ECMWF: 114 previsioni
 ICON-EU: 114 previsioni
-Previsioni nuove salvate: 0
-RIEPILOGO: 4720 coppie su 10716 previsioni, 47 cicli
-  + 6 h  n=757  ECMWF mae 3.05 bias +0.75 | ICON mae 2.25 bias -1.04
+Previsioni nuove salvate: 228
+RIEPILOGO: 4776 coppie su 10944 previsioni, 48 cicli
+  + 6 h  n=775  ECMWF mae 3.09 bias +0.76 | ICON mae 2.28 bias -1.02
   +12 h  n=830  ECMWF mae 2.97 bias -0.15 | ICON mae 2.48 bias -1.41
-  +24 h  n=812  ECMWF mae 2.98 bias -0.36 | ICON mae 2.53 bias -1.39
+  +24 h  n=831  ECMWF mae 2.99 bias -0.35 | ICON mae 2.54 bias -1.39
   +36 h  n=793  ECMWF mae 3.13 bias -0.03 | ICON mae 2.62 bias -1.43
-  +48 h  n=755  ECMWF mae 3.22 bias -0.19 | ICON mae 2.72 bias -1.44
+  +48 h  n=774  ECMWF mae 3.23 bias -0.17 | ICON mae 2.73 bias -1.42
   +72 h  n=773  ECMWF mae 3.37 bias -0.37 | ICON mae 2.88 bias -1.39
